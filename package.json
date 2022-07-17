@@ -1,7 +1,7 @@
 {
 	"name": "obsidian-inline-calc",
 	"version": "1.0.0",
-	"description": "Performs inline calculations similar to OneNote",
+	"description": "Performs inline math calculations when you hit =",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
@@ -22,6 +22,7 @@
 		"typescript": "4.7.4"
 	},
 	"dependencies": {
-		"expressionparser": "^1.1.5"
+		"expressionparser": "^1.1.5",
+		"safety-match": "^0.4.4"
 	}
 }

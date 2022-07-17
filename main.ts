@@ -11,14 +11,29 @@ import {
 	TFile,
 } from "obsidian";
 
-type Expr = ExpressionValue | string;
+import {makeTaggedUnion, MemberType} from "safety-match";
+
+const InlineCalcResultVariant = makeTaggedUnion({
+	LaTeX: (latex: string, offset: number) => ({latex, offset}),
+	ExpressionValue: (value: ExpressionValue) => value,
+});
+
+type InlineCalcResult = MemberType<typeof InlineCalcResultVariant>
 
 const delegates: { [key:string]: number } = {
 	'π': Math.PI,
+	'ϕ': Math.PI * 2,
+	'φ': Math.PI * 2,
 	PHI: Math.PI * 2,
 }
 
-class InlineCalc extends EditorSuggest<Expr> {
+const infixDelegates: { [key:string]: string } = {
+	'×': '*',
+	'⋅': '*',
+	'÷': '/',
+}
+
+class InlineCalc extends EditorSuggest<InlineCalcResult> {
 	plugin: InlineCalcPlugin;
 	pattern: RegExp;
 	lastEditorSuggestTriggerInfo: EditorSuggestTriggerInfo;
@@ -41,66 +56,88 @@ class InlineCalc extends EditorSuggest<Expr> {
 		editor: Editor,
 		_file: TFile
 	): EditorSuggestTriggerInfo | null {
+		const {line, ch} = cursor;
 		const range = editor.getRange(
-			{ line: cursor.line, ch: 0 },
-			{ line: cursor.line, ch: cursor.ch }
+			{ line, ch: 0 },
+			cursor
 		);
 		const testResults = this.pattern.exec(range);
 		if (!testResults) return null;
 		else {
-			const suggestText = testResults[1];
+			const query = testResults[1]
+				// capitalise a-z (don't capitalise all unicode, as π -> Π)
+				.replace(/[a-z]*/g, str => str.toUpperCase())
+				// replace × with * and stuff
+				.split('').map(l => infixDelegates[l] || l).join('');
+
 			this.lastEditorSuggestTriggerInfo = {
 				start: {
-					line: cursor.line,
-					ch: cursor.ch - suggestText.length - 1,
+					line,
+					ch: ch - query.length - 1,
 				},
-				end: { line: cursor.line, ch: cursor.ch },
-				query: testResults[1],
+				end: cursor,
+				query,
 			};
+
 			return this.lastEditorSuggestTriggerInfo;
 		}
 	}
 
-	getSuggestions(context: EditorSuggestContext): Expr[] {
-		let candidates = context.query
-			.split(" ")
-			.filter((x) => x !== "")
-			.reduceRight<string[]>(
-				(acc, v) => [[v, acc[0]].join(" ").trim(), ...acc],
-				[]
-			);
+	getSuggestions(context: EditorSuggestContext): InlineCalcResult[] {
+		if (context.query == "") return [];
 
-		for (let candidate of candidates) {
+		for (let m, reg = /\S+/g; m = reg.exec(context.query); ) {
+			const candidate = context.query.substring(m.index);
 			try {
-				let value = this.parser.expressionToValue(candidate.toUpperCase());
-				return [value];
-			} catch (e) {}
+				let value = this.parser.expressionToValue(candidate);
+				return [
+					InlineCalcResultVariant.ExpressionValue(value),
+					InlineCalcResultVariant.LaTeX(
+						`\$${candidate}= ${value}\$`, 
+						context.query.length - m.index
+					),
+				];
+			} catch (e) {
+				// console.error(e);
+			}
 		}
+		// nothing found; but let's not bother the user
 		return [];
-		// return [new Expr(context.query)];
 	}
 
-	renderSuggestion(item: Expr, el: HTMLElement): void {
-		el.createEl("span", { text: `↵ ${item}` });
+	renderSuggestion(item: InlineCalcResult, el: HTMLElement): void {
+		const text = item.match({
+			ExpressionValue: (v) => `↵ ${v}`,
+			LaTeX: (_) => '$ Insert as LaTeX',
+		})
+		el.createEl("span", { text });
 	}
 
-	selectSuggestion(item: Expr, evt: MouseEvent | KeyboardEvent): void {
+	selectSuggestion(item: InlineCalcResult, _: MouseEvent | KeyboardEvent): void {
 		const currentView =
 			this.plugin.app.workspace.getActiveViewOfType(MarkdownView);
 		this.close();
-		const result = ` ${item}`;
-		if (currentView) {
-			currentView.editor.replaceRange(
-				result,
-				this.lastEditorSuggestTriggerInfo.end,
-				this.lastEditorSuggestTriggerInfo.end
-			);
+		if (!currentView) return;
+		const end = this.lastEditorSuggestTriggerInfo.end;
+		const {suggestion, offset} = item.match({
+			ExpressionValue: (value) => ({suggestion: ` ${value}`, offset: 0}),
+			LaTeX: ({latex, offset}) => ({suggestion: latex, offset: offset + 1}),
+		});
 
-			currentView.editor.setCursor({
-				line: this.lastEditorSuggestTriggerInfo.end.line,
-				ch: this.lastEditorSuggestTriggerInfo.end.ch + result.length,
-			});
-		}
+		// insert the result after = with a space
+		currentView.editor.replaceRange(
+			suggestion,
+			{
+				line: end.line,
+				ch: end.ch - offset,
+			},
+			end
+		);
+		// put the cursor after the inserted result
+		currentView.editor.setCursor({
+			line: end.line,
+			ch: end.ch - offset + suggestion.length,
+		});
 	}
 }
 
