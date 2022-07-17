@@ -1,0 +1,10 @@
+{
+	"id": "obsidian-inline-calc",
+	"name": "Inline calculator",
+	"version": "1.0.0",
+	"minAppVersion": "0.12.0",
+	"description": "Performs inline calculations similar to OneNote",
+	"author": "Liam Saliba",
+	"authorUrl": "https://liamsaliba.github.io",
+	"isDesktopOnly": false
+}
